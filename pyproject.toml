@@ -43,6 +43,7 @@ py-modules = [
     "debreak_rescuedupfromins",
     "debreak_rescuelargeins",
     "debreak_resdup_selfalignment",
+    "debreak_lowmem",
     "complexsv",
     "genefusion",
 ]

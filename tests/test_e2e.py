@@ -34,7 +34,14 @@ def _sorted_lines(text):
     return "".join(line + "\n" for line in sorted(text.splitlines()))
 
 
-def _run(outdir, *extra, bam=BAM, cwd=REPO, expect_rc=0):
+# Every pipeline scenario runs twice: with the original code path and with
+# --lowmem (debreak_lowmem.py). Both must produce the same outputs, so they are
+# checked against the same golden files. With --update-golden only the default
+# run regenerates them; the --lowmem run is then compared against the fresh copy.
+BOTH_MODES = pytest.mark.parametrize("lowmem", [False, True], ids=["default", "lowmem"])
+
+
+def _run(outdir, *extra, bam=BAM, cwd=REPO, expect_rc=0, lowmem=False):
     """Run debreak. `bam=None` omits --bam (e.g. for --samlist runs)."""
     cmd = [sys.executable, LAUNCHER]
     if bam is not None:
@@ -42,6 +49,8 @@ def _run(outdir, *extra, bam=BAM, cwd=REPO, expect_rc=0):
     if outdir is not None:
         cmd += ["-o", str(outdir) + "/"]
     cmd += ["-t", "4", *extra]
+    if lowmem:
+        cmd.append("--lowmem")
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600,
                           stdin=subprocess.DEVNULL)
     assert proc.returncode == expect_rc, proc.stdout + proc.stderr
@@ -94,15 +103,17 @@ SCENARIOS = {
 }
 
 
+@BOTH_MODES
 @pytest.mark.parametrize("name", SCENARIOS)
-def test_pipeline_matches_golden(name, tmp_path, update_golden):
-    _run(tmp_path / "out", *SCENARIOS[name])
-    _check_golden(name, _collect(tmp_path / "out"), update_golden)
+def test_pipeline_matches_golden(name, lowmem, tmp_path, update_golden):
+    _run(tmp_path / "out", *SCENARIOS[name], lowmem=lowmem)
+    _check_golden(name, _collect(tmp_path / "out"), update_golden and not lowmem)
 
 
-def test_default_run_finds_all_six_simulated_svs(tmp_path):
+@BOTH_MODES
+def test_default_run_finds_all_six_simulated_svs(lowmem, tmp_path):
     """Sanity check independent of snapshots: the test BAM has 6 embedded SVs."""
-    _run(tmp_path / "out")
+    _run(tmp_path / "out", lowmem=lowmem)
     with open(tmp_path / "out" / "debreak.vcf") as f:
         records = [l.split("\t") for l in f if not l.startswith("#")]
     svtypes = sorted(r[7].split("SVTYPE=")[1].split(";")[0] for r in records)
@@ -130,17 +141,22 @@ def _have(*tools):
     return all(shutil.which(t) for t in tools)
 
 
+@BOTH_MODES
 @pytest.mark.skipif(not _have("minimap2"), reason="needs minimap2")
-def test_rescue_dup_matches_golden(tmp_path, update_golden):
-    _run(tmp_path / "out", "--rescue_dup", "-r", REF)
-    _check_golden("rescue_dup", _collect(tmp_path / "out"), update_golden, required=False)
+def test_rescue_dup_matches_golden(lowmem, tmp_path, update_golden):
+    _run(tmp_path / "out", "--rescue_dup", "-r", REF, lowmem=lowmem)
+    _check_golden("rescue_dup", _collect(tmp_path / "out"), update_golden and not lowmem,
+                  required=False)
 
 
+@BOTH_MODES
 @pytest.mark.skipif(not _have("minimap2", "wtdbg2", "wtpoa-cns", "bsalign"),
                     reason="needs minimap2, wtdbg2, bsalign")
-def test_full_pipeline_matches_golden(tmp_path, update_golden):
-    _run(tmp_path / "out", "--poa", "--rescue_large_ins", "--rescue_dup", "-r", REF)
-    _check_golden("full", _collect(tmp_path / "out"), update_golden, required=False)
+def test_full_pipeline_matches_golden(lowmem, tmp_path, update_golden):
+    _run(tmp_path / "out", "--poa", "--rescue_large_ins", "--rescue_dup", "-r", REF,
+         lowmem=lowmem)
+    _check_golden("full", _collect(tmp_path / "out"), update_golden and not lowmem,
+                  required=False)
 
 
 # --- translocations: synthetic 2-chromosome dataset (tests/make_tra_testdata.py)
@@ -163,14 +179,16 @@ def _info(rec):
     return dict(kv.split("=", 1) for kv in rec[7].split(";") if "=" in kv)
 
 
+@BOTH_MODES
 @pytest.mark.parametrize("name", TRA_SCENARIOS)
-def test_tra_pipeline_matches_golden(name, tmp_path, update_golden):
-    _run(tmp_path / "out", *TRA_SCENARIOS[name], bam="tra.bam", cwd=TRA_DIR)
-    _check_golden(name, _collect(tmp_path / "out"), update_golden)
+def test_tra_pipeline_matches_golden(name, lowmem, tmp_path, update_golden):
+    _run(tmp_path / "out", *TRA_SCENARIOS[name], bam="tra.bam", cwd=TRA_DIR, lowmem=lowmem)
+    _check_golden(name, _collect(tmp_path / "out"), update_golden and not lowmem)
 
 
-def test_tra_both_translocations_detected(tmp_path):
-    _run(tmp_path / "out", bam="tra.bam", cwd=TRA_DIR)
+@BOTH_MODES
+def test_tra_both_translocations_detected(lowmem, tmp_path):
+    _run(tmp_path / "out", bam="tra.bam", cwd=TRA_DIR, lowmem=lowmem)
     recs = _vcf_records(tmp_path / "out" / "debreak.vcf")
     assert [r[4] for r in recs] == ["<TRA>", "<TRA>"]
     # merged calls carry both breakpoints; positions from make_tra_testdata.EVENTS (+1)
@@ -229,15 +247,16 @@ def samlist_dir(tmp_path_factory):
     return d
 
 
-def test_samlist_matches_golden(samlist_dir, tmp_path, update_golden):
+@BOTH_MODES
+def test_samlist_matches_golden(samlist_dir, lowmem, tmp_path, update_golden):
     # BUG: --samlist always crashes when writing the VCF: writevcf_pysam()
     # gets the samlist *directory* as `bampath` and opens it with pysam.
     # Detection, clustering and debreak-allsv-merged-final still happen.
     proc = _run(tmp_path / "out", "--samlist", "samlist.txt", bam=None,
-                cwd=samlist_dir, expect_rc=1)
+                cwd=samlist_dir, expect_rc=1, lowmem=lowmem)
     assert "Could not open alignment file" in proc.stderr
     assert not (tmp_path / "out" / "debreak.vcf").exists()
-    _check_golden("samlist", _collect(tmp_path / "out"), update_golden)
+    _check_golden("samlist", _collect(tmp_path / "out"), update_golden and not lowmem)
 
 
 def test_samlist_from_other_cwd_fails_on_depth_estimation(samlist_dir, tmp_path):
@@ -304,10 +323,11 @@ def test_outpath_without_trailing_slash(tmp_path):
     assert not (tmp_path / "nested" / "outdebreak.vcf").exists()
 
 
-def test_skip_detect_reuses_existing_raw_calls(tmp_path):
+@BOTH_MODES
+def test_skip_detect_reuses_existing_raw_calls(lowmem, tmp_path):
     out = tmp_path / "out"
-    _run(out)
+    _run(out, lowmem=lowmem)
     first = (out / "debreak.vcf").read_text()
     (out / "map_depth" / "maplength_allchrom_debreak").unlink()
-    _run(out, "--skip_detect")
+    _run(out, "--skip_detect", lowmem=lowmem)
     assert _normalize_vcf((out / "debreak.vcf").read_text()) == _normalize_vcf(first)
