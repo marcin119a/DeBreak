@@ -1,0 +1,58 @@
+name: mutation
+
+# Mutation testing with mutmut (config: [tool.mutmut] in pyproject.toml).
+# Fails if the mutation score drops below MIN_SCORE; raise it as tests improve.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    paths:
+      - "*.py"
+      - "debreak"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/mutation.yml"
+  schedule:
+    - cron: "0 4 * * 1"  # weekly, Monday 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MIN_SCORE: "68"
+
+jobs:
+  mutmut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install ".[test,mutation]"
+
+      - name: Run mutation testing
+        run: mutmut run --max-children "$(nproc)"
+
+      - name: Check mutation score
+        run: |
+          mutmut export-cicd-stats
+          python tests/check_mutation_score.py --min "$MIN_SCORE"
+
+      - name: Save surviving mutants
+        if: always()
+        run: mutmut results > mutmut-results.txt || true
+
+      - name: Upload mutation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-results
+          path: |
+            mutmut-results.txt
+            mutants/mutmut-cicd-stats.json

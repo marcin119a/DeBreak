@@ -1,0 +1,27 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##source=DeBreak
+##contig=<ID=chr1,length=50000>
+##contig=<ID=chr2,length=50000>
+##ALT=<ID=DEL,Description="Deletion">
+##ALT=<ID=INS,Description="Insertion">
+##ALT=<ID=DUP,Description="Duplication">
+##ALT=<ID=INV,Description="Inversion">
+##ALT=<ID=TRA,Description="Translocation">
+##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for END">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the structural variant">
+##INFO=<ID=MAPQ,Number=1,Type=Integer,Description="Mean mapping quality of supporting reads">
+##INFO=<ID=SUPPREAD,Number=1,Type=Integer,Description="Number of supporting reads">
+##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Length of the SV">
+##INFO=<ID=SVMETHOD,Number=1,Type=String,Description="Type of approach used to detect SV">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+##INFO=<ID=PRECISE,Number=0,Type=Flag,Description="Variant with precise breakpoint position from POA">
+##INFO=<ID=MULTI,Number=0,Type=Flag,Description="If the SV is multi-allelic SV">
+##INFO=<ID=LARGEINS,Number=0,Type=Flag,Description="Large insertion indentified from local assembly">
+##INFO=<ID=START2,Number=1,Type=Integer,Description="SV start position on the second haplotype of multi-allilic SV">
+##INFO=<ID=END2,Number=1,Type=Integer,Description="SV end position on the second haplotype of multi-allilic SV">
+##INFO=<ID=SVLEN2,Number=1,Type=Integer,Description="SV length on the second haplotype of multi-allilic SV">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	tra.bam
+chr1	25002	DB1	N	<TRA>	.	PASS	END=30001;CHR2=chr2;SVLEN=0;SUPPREAD=25;MAPQ=60;SVMETHOD=DeBreak;SVTYPE=TRA	.	.
+chr1	40002	DB2	N	<TRA>	.	PASS	END=40002;CHR2=chr2;SVLEN=0;SUPPREAD=25;MAPQ=60;SVMETHOD=DeBreak;SVTYPE=TRA	.	.

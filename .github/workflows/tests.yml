@@ -94,6 +94,15 @@ jobs:
             htmlcov/
             coverage.xml
 
+      - name: Upload coverage to Codecov
+        if: ${{ !inputs.update_golden }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: external-tools
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Regenerate golden files
         if: ${{ inputs.update_golden }}
         run: pytest -ra --update-golden -k "rescue_dup_matches_golden or full_pipeline_matches_golden"

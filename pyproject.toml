@@ -25,6 +25,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
+mutation = ["mutmut>=3.8,<4"]
 
 [project.urls]
 Homepage = "https://github.com/Maggi-Chen/DeBreak"
@@ -60,9 +61,27 @@ testpaths = ["tests"]
 patch = ["subprocess"]
 concurrency = ["multiprocessing"]
 parallel = true
-source = ["."]
-omit = ["tests/*", ".venv/*"]
+# Workers re-read this file from their own CWD (E2E tests run debreak from
+# testdata/tra or tmp dirs), so paths must not be CWD-relative. DEBREAK_REPO
+# is set by tests/conftest.py; "." is the fallback for the pytest process.
+source = ["${DEBREAK_REPO-.}"]
+data_file = "${DEBREAK_REPO-.}/.coverage"
+omit = ["*/tests/*", "*/.venv/*"]
 
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+[tool.mutmut]
+# Mutation testing (`mutmut run`, results: `mutmut results` / `mutmut browse`).
+# Only modules with unit tests; E2E tests are excluded because they run the
+# pipeline in a subprocess per test, which is too slow per mutant.
+source_paths = [
+    "debreak_detect.py",
+    "debreak_merge_cluster.py",
+    "debreak_merge_contig.py",
+    "debreak_genotype.py",
+]
+mutate_only_covered_lines = true
+also_copy = ["testdata", "debreak"]
+pytest_add_cli_args_test_selection = ["tests/test_detect.py", "tests/test_merge_genotype.py"]
