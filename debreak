@@ -13,6 +13,7 @@ import debreak_resdup_selfalignment
 import debreak_genotype
 import debreak_allpoa
 import debreak_rescuelargeins
+import debreak_lowmem
 import pysam
 import sys
 
@@ -38,6 +39,7 @@ parser.add_argument('-r','--ref',type=str,default=False,help='reference genome. 
 parser.add_argument('--maxcov',type=int,default=False,help='Maximal coverage for a SV. Suggested maxcov as 2 times mean depth.')
 parser.add_argument('--skip_detect',action='store_true',default=False,help='Skip SV raw signal detection.')
 parser.add_argument('--tumor',action='store_true',default=False,help='Allow clustered SV breakpoints during raw SV signal detection')
+parser.add_argument('--lowmem',action='store_true',default=False,help='Low-memory mode: same output, but raw signals, clustering and DUP rescue are run by debreak_lowmem.py without genome-sized or read-sequence-sized data in RAM')
 
 
 debreak_args=parser.parse_args()
@@ -119,10 +121,11 @@ else:
 	for chrom in chromosomes:
 		chromolength[chrom]=chrominfofile.get_reference_length(chrom)
 	debreak_det=multiprocessing.Pool(debreak_args.thread)
+	detect_sortbam=debreak_lowmem.detect_sortbam if debreak_args.lowmem else debreak_detect.detect_sortbam
 	for i in range(len(chromosomes)):
 		vcflist+=[readpath.split('/')[-1]+'-'+chromosomes[i]+'.debreak.temp']
 		if not debreak_args.skip_detect:
-			debreak_det.apply_async(debreak_detect.detect_sortbam,args=(readpath,writepath,debreak_args.min_size,debreak_args.max_size,chromosomes[i],chromosomes,record_clip,debreak_args.rescue_dup,debreak_args.tumor))
+			debreak_det.apply_async(detect_sortbam,args=(readpath,writepath,debreak_args.min_size,debreak_args.max_size,chromosomes[i],chromosomes,record_clip,debreak_args.rescue_dup,debreak_args.tumor))
 	debreak_det.close()
 	debreak_det.join()
 # Merge deletions & insertions from temp files
@@ -132,28 +135,32 @@ logfile.write('Done detecting raw SV signals.\n')
 logfile.close()
 
 
-rawinscall={}; rawdelcall={};  rawdupcall={};  rawinvcall={};  rawtracall={}
-for chrom in chromosomes:
-	rawinscall[chrom]=[];  	rawdelcall[chrom]=[];  	rawdupcall[chrom]=[];  	rawinvcall[chrom]=[];  	rawtracall[chrom]=[]
-for filename in vcflist:
-	try:
-		allvcf=open(writepath+'sv_raw_calls/'+filename,'r').read().split('\n')[:-1]
-		event_chrom=allvcf[0].split('\t')[0]
-	except:
-		continue
-	for event in allvcf:
-		event_chrom=event.split('\t')[0]
-		if 'I-' in event:
-			event=event.split('\t')
-			rawinscall[event_chrom]+=[event[0]+'\t'+event[1]+'\t'+event[2]+'\t'+event[3]+'\t'+event[4]+'\t'+event[5]+'\t'+event[6]]
-		if 'D-' in event:
-			rawdelcall[event_chrom]+=[event]
-		if 'DUP-' in event:
-			rawdupcall[event_chrom]+=[event]
-		if 'INV-' in event:
-			rawinvcall[event_chrom]+=[event]
-		if 'TRA-' in event:
-			rawtracall[event_chrom]+=[event.split('\t')[0]+'\t'+event.split('\t')[1]+'\t'+event.split('\t')[2]+'\t'+event.split('\t')[3]+'\t'+event.split('\t')[7]+'\t'+event.split('\t')[5]]
+if debreak_args.lowmem:
+	# stream the raw calls into per-chromosome/per-type files instead of holding them all in RAM
+	splitdir=debreak_lowmem.split_raw_calls(writepath,vcflist,chromosomes)
+else:
+	rawinscall={}; rawdelcall={};  rawdupcall={};  rawinvcall={};  rawtracall={}
+	for chrom in chromosomes:
+		rawinscall[chrom]=[];  	rawdelcall[chrom]=[];  	rawdupcall[chrom]=[];  	rawinvcall[chrom]=[];  	rawtracall[chrom]=[]
+	for filename in vcflist:
+		try:
+			allvcf=open(writepath+'sv_raw_calls/'+filename,'r').read().split('\n')[:-1]
+			event_chrom=allvcf[0].split('\t')[0]
+		except:
+			continue
+		for event in allvcf:
+			event_chrom=event.split('\t')[0]
+			if 'I-' in event:
+				event=event.split('\t')
+				rawinscall[event_chrom]+=[event[0]+'\t'+event[1]+'\t'+event[2]+'\t'+event[3]+'\t'+event[4]+'\t'+event[5]+'\t'+event[6]]
+			if 'D-' in event:
+				rawdelcall[event_chrom]+=[event]
+			if 'DUP-' in event:
+				rawdupcall[event_chrom]+=[event]
+			if 'INV-' in event:
+				rawinvcall[event_chrom]+=[event]
+			if 'TRA-' in event:
+				rawtracall[event_chrom]+=[event.split('\t')[0]+'\t'+event.split('\t')[1]+'\t'+event.split('\t')[2]+'\t'+event.split('\t')[3]+'\t'+event.split('\t')[7]+'\t'+event.split('\t')[5]]
 
 
 # Estimate Depth of input dataset
@@ -208,15 +215,28 @@ logfile.close()
 # Merge all SVs
 debreak_meg=multiprocessing.Pool(debreak_args.thread//2)
 
-for i in range(len(chromosomes)):
-	debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawdelcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'del',debreak_args.min_quality,))
-	debreak_meg.apply_async(debreak_merge_cluster.cluster_ins,args=(writepath,rawinscall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,debreak_args.min_quality,))
-	debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawdupcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'dup',debreak_args.min_quality,))
-	debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawinvcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'inv',debreak_args.min_quality,))
-	debreak_meg.apply_async(debreak_merge.merge_translocation,args=(minsupp,writepath,rawtracall[chromosomes[i]],chromosomes[i],True,debreak_args.min_quality,))
+if debreak_args.lowmem:
+	meg_results=[]
+	for i in range(len(chromosomes)):
+		meg_results+=[debreak_meg.apply_async(debreak_lowmem.cluster_file,args=(splitdir,writepath,chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'del',debreak_args.min_quality,))]
+		meg_results+=[debreak_meg.apply_async(debreak_lowmem.cluster_ins_file,args=(splitdir,writepath,chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,debreak_args.min_quality,))]
+		meg_results+=[debreak_meg.apply_async(debreak_lowmem.cluster_file,args=(splitdir,writepath,chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'dup',debreak_args.min_quality,))]
+		meg_results+=[debreak_meg.apply_async(debreak_lowmem.cluster_file,args=(splitdir,writepath,chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'inv',debreak_args.min_quality,))]
+		meg_results+=[debreak_meg.apply_async(debreak_lowmem.merge_translocation_file,args=(splitdir,minsupp,writepath,chromosomes[i],True,debreak_args.min_quality,))]
+else:
+	for i in range(len(chromosomes)):
+		debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawdelcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'del',debreak_args.min_quality,))
+		debreak_meg.apply_async(debreak_merge_cluster.cluster_ins,args=(writepath,rawinscall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,debreak_args.min_quality,))
+		debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawdupcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'dup',debreak_args.min_quality,))
+		debreak_meg.apply_async(debreak_merge_cluster.cluster,args=(writepath,rawinvcall[chromosomes[i]],chromosomes[i],chromolength[chromosomes[i]],minsupp,highcov,'inv',debreak_args.min_quality,))
+		debreak_meg.apply_async(debreak_merge.merge_translocation,args=(minsupp,writepath,rawtracall[chromosomes[i]],chromosomes[i],True,debreak_args.min_quality,))
 
 debreak_meg.close()
 debreak_meg.join()
+if debreak_args.lowmem:
+	for r in meg_results:
+		r.get()
+	debreak_lowmem.remove_split(splitdir)
 
 
 os.system("cat "+writepath+"del-merged-cluster-* > "+writepath+"deletion-merged")
@@ -237,7 +257,10 @@ if debreak_args.rescue_dup:
 		logfile=open(writepath+'log.txt','a')
 		logfile.write('Start identifying DUP from INS calls...\n')
 		logfile.close()
-		debreak_resdup_selfalignment.identify_duplication(vcflist,writepath,debreak_args.ref)
+		if debreak_args.lowmem:
+			debreak_lowmem.identify_duplication(vcflist,writepath,debreak_args.ref)
+		else:
+			debreak_resdup_selfalignment.identify_duplication(vcflist,writepath,debreak_args.ref)
 		logfile=open(writepath+'log.txt','a')
 		logfile.write('Done DUP rescue.\n')
 		logfile.close()
