@@ -1,0 +1,9 @@
+Start calling SV...
+Done detecting raw SV signals.
+Estimated Sequencing Depth: 50.172222222222224
+Suggested min_supp:7
+Suggested maximal depth:120
+Start clustering raw signals...
+Done clustering raw signals.
+Warning:  No sorted bam file provided. Abort genotyping.
+Start writing VCF file...
