@@ -84,4 +84,8 @@ source_paths = [
 ]
 mutate_only_covered_lines = true
 also_copy = ["testdata", "debreak"]
-pytest_add_cli_args_test_selection = ["tests/test_detect.py", "tests/test_merge_genotype.py"]
+pytest_add_cli_args_test_selection = [
+    "tests/test_detect.py",
+    "tests/test_merge_genotype.py",
+    "tests/test_genotype_boundaries.py",
+]
