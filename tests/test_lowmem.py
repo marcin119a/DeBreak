@@ -289,6 +289,47 @@ def test_split_raw_calls_drops_insertion_sequences(tmp_path):
     assert lm._read_split(splitdir, "chr1", "tra") == []
 
 
+@pytest.mark.parametrize("golden", ["default", "tumor", "tra_default"])
+def test_split_raw_calls_with_few_open_files(tmp_path, golden, monkeypatch):
+    """Handles evicted from the open-file cache are reopened in append mode:
+    same content and line order as with every file kept open."""
+    lines = open(os.path.join(REPO, "tests", "golden", golden, "sv_raw_calls.txt")).read().splitlines()
+    (tmp_path / "sv_raw_calls").mkdir()
+    (tmp_path / "sv_raw_calls" / "a.debreak.temp").write_text("".join(l + "\n" for l in lines))
+    chromosomes = sorted({l.split("\t")[0] for l in lines})
+    wp = str(tmp_path) + "/"
+    expected = _driver_dicts(wp, ["a.debreak.temp"], chromosomes)
+    monkeypatch.setattr(lm, "SPLIT_MAX_OPEN", 1)
+    splitdir = lm.split_raw_calls(wp, ["a.debreak.temp"], chromosomes)
+    for svtype in expected:
+        for chrom in chromosomes:
+            assert lm._read_split(splitdir, chrom, svtype) == expected[svtype][chrom], (svtype, chrom)
+
+
+def test_split_raw_calls_more_contigs_than_open_file_limit(tmp_path):
+    """GRCh38 + decoys has ~2800 contigs; with five SV types that is far more
+    split files than `ulimit -n` (1024) allows to be open at once."""
+    resource = pytest.importorskip("resource")
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(soft, 512), hard))
+    try:
+        n = 800
+        (tmp_path / "sv_raw_calls").mkdir()
+        with open(str(tmp_path / "sv_raw_calls" / "x.temp"), "w") as f:
+            for rnd in range(2):          # every contig is revisited after eviction
+                for i in range(n):
+                    f.write("ctg%d\t%d\t70\tD-cigar\tr%d_cigar1\t16\t55\n" % (i, 100 + rnd, rnd))
+                    f.write("ctg%d\t%d\t60\tI-cigar\tr%d_cigar1\t0\t60\t500\tACGT\tTTTT\n" % (i, 100 + rnd, rnd))
+        splitdir = lm.split_raw_calls(str(tmp_path) + "/", ["x.temp"], ["ctg%d" % i for i in range(n)])
+        for i in (0, 1, n // 2, n - 1):
+            assert lm._read_split(splitdir, "ctg%d" % i, "del") == [
+                "ctg%d\t%d\t70\tD-cigar\tr%d_cigar1\t16\t55" % (i, 100 + r, r) for r in range(2)]
+            assert lm._read_split(splitdir, "ctg%d" % i, "ins") == [
+                "ctg%d\t%d\t60\tI-cigar\tr%d_cigar1\t0\t60" % (i, 100 + r, r) for r in range(2)]
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
 # ---------------------------------------------------------------- detect_sortbam
 
 def _detect(mod, bam, outdir, record_clip, rescuedup, tumor):

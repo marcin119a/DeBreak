@@ -35,6 +35,7 @@ data in RAM.
 """
 
 import bisect
+import collections
 import os
 import shutil
 import time
@@ -200,6 +201,9 @@ def detect_sortbam(filename,writepath,min_size,max_size,chrom,chromosomes,record
 # raw calls -> per-chromosome / per-type files (replaces the driver's dicts)
 # ---------------------------------------------------------------------------
 
+# open split files kept at once by split_raw_calls (well below ulimit -n 1024)
+SPLIT_MAX_OPEN=256
+
 def split_raw_calls(writepath,vcflist,chromosomes):
 	"""One streaming pass over the raw-call files. For every chromosome it writes
 	exactly the lines the driver used to keep in rawinscall / rawdelcall /
@@ -210,11 +214,19 @@ def split_raw_calls(writepath,vcflist,chromosomes):
 	if os.path.exists(splitdir):
 		shutil.rmtree(splitdir)
 	os.makedirs(splitdir)
-	handles={}
+	# A reference with thousands of contigs (GRCh38 + decoys: ~2800) times five
+	# SV types is more files than the usual 1024 open-file limit, so only the
+	# most recently used handles stay open; an evicted file is reopened in
+	# append mode (splitdir is created empty above), which keeps line order.
+	handles=collections.OrderedDict()
 	def out(chrom,svtype):
 		key=(chrom,svtype)
-		if key not in handles:
-			handles[key]=open(splitdir+chrom+'.'+svtype,'w')
+		if key in handles:
+			handles.move_to_end(key)
+			return handles[key]
+		if len(handles)>=SPLIT_MAX_OPEN:
+			handles.popitem(last=False)[1].close()
+		handles[key]=open(splitdir+chrom+'.'+svtype,'a')
 		return handles[key]
 	for filename in vcflist:
 		path=writepath+'sv_raw_calls/'+filename
